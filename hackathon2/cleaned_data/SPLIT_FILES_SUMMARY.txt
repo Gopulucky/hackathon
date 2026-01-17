@@ -1,0 +1,54 @@
+======================================================================
+CLEANED DATA - SPLIT FILES SUMMARY
+======================================================================
+Generated: 2026-01-17 19:31:40
+======================================================================
+
+NOTE: Files have been split to comply with Excel's row limit
+      Excel maximum rows per sheet: 1,048,576
+
+======================================================================
+
+BIOMETRIC DATASET
+----------------------------------------------------------------------
+  biometric_cleaned_part1.csv
+    Rows: 1,048,576
+    Size: 55.25 MB
+  biometric_cleaned_part2.csv
+    Rows: 717,636
+    Size: 37.63 MB
+
+  Total: 2 file(s), 1,766,212 rows
+
+DEMOGRAPHIC DATASET
+----------------------------------------------------------------------
+  demographic_cleaned_part1.csv
+    Rows: 1,048,576
+    Size: 55.05 MB
+  demographic_cleaned_part2.csv
+    Rows: 174,022
+    Size: 9.12 MB
+
+  Total: 2 file(s), 1,222,598 rows
+
+ENROLMENT DATASET
+----------------------------------------------------------------------
+  enrolment_cleaned_part1.csv
+    Rows: 983,072
+    Size: 52.91 MB
+
+  Total: 1 file(s), 983,072 rows
+
+======================================================================
+USAGE INSTRUCTIONS
+======================================================================
+1. Each part file can be opened separately in Excel
+2. For complete analysis, combine all parts using Python/pandas
+3. All files maintain the same column structure
+4. Data is split sequentially (no data loss)
+
+Example Python code to combine:
+  import pandas as pd
+  import glob
+  files = glob.glob('biometric_cleaned_part*.csv')
+  df = pd.concat([pd.read_csv(f) for f in files])
