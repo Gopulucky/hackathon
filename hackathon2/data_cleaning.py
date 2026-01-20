@@ -172,14 +172,68 @@ def standardize_state(state_value):
     return 'INVALID'
 
 
-def clean_dataset(input_dir, output_file, dataset_name):
+# Excel's maximum rows per sheet
+EXCEL_MAX_ROWS = 1048576
+
+
+def split_and_save(df, output_base, max_rows=EXCEL_MAX_ROWS):
     """
-    Clean a single dataset.
+    Split a dataframe into multiple parts if it exceeds max_rows.
+    
+    Parameters:
+    -----------
+    df : pd.DataFrame - The dataframe to split
+    output_base : str - Base path for output (e.g., 'cleaned_data/biometric_cleaned')
+    max_rows : int - Maximum rows per file (default: Excel limit)
+    
+    Returns:
+    --------
+    list of dicts with file info: [{'file': path, 'rows': count, 'size_mb': size}, ...]
+    """
+    total_rows = len(df)
+    files_info = []
+    
+    if total_rows <= max_rows:
+        # No splitting needed, but still use part1 naming for consistency
+        output_file = f"{output_base}_part1.csv"
+        df.to_csv(output_file, index=False)
+        size_mb = os.path.getsize(output_file) / (1024 * 1024)
+        files_info.append({
+            'file': output_file,
+            'rows': total_rows,
+            'size_mb': size_mb
+        })
+    else:
+        # Split into multiple parts
+        num_parts = (total_rows // max_rows) + (1 if total_rows % max_rows else 0)
+        
+        for i in range(num_parts):
+            start_idx = i * max_rows
+            end_idx = min((i + 1) * max_rows, total_rows)
+            
+            part_df = df.iloc[start_idx:end_idx]
+            output_file = f"{output_base}_part{i + 1}.csv"
+            part_df.to_csv(output_file, index=False)
+            
+            size_mb = os.path.getsize(output_file) / (1024 * 1024)
+            files_info.append({
+                'file': output_file,
+                'rows': len(part_df),
+                'size_mb': size_mb
+            })
+            print(f"    Part {i + 1}: {len(part_df):,} rows ({size_mb:.2f} MB)")
+    
+    return files_info
+
+
+def clean_dataset(input_dir, output_base, dataset_name):
+    """
+    Clean a single dataset and split if necessary.
     
     Parameters:
     -----------
     input_dir : str - Directory containing CSV files
-    output_file : str - Path for cleaned output CSV
+    output_base : str - Base path for cleaned output (without extension)
     dataset_name : str - Name for logging
     
     Returns:
@@ -226,13 +280,30 @@ def clean_dataset(input_dir, output_file, dataset_name):
     # Validate pincode (should be 6 digits)
     df_dedup['pincode'] = df_dedup['pincode'].astype(str).str.zfill(6)
     
+    # ============================================================================
+    # SECTION 2.3: LOGICAL SORTING (TIME-SERIES PREPARATION)
+    # ============================================================================
+    # Apply nested sorting: Date → State → District
+    # Uses mergesort (stable sort) to preserve relative order of records
+    sort_cols = ["date", "state", "district"]
+    df_dedup.sort_values(
+        by=sort_cols,
+        ascending=[True, True, True],
+        inplace=True,
+        kind="mergesort"  # Stable sort algorithm
+    )
+    df_dedup.reset_index(drop=True, inplace=True)
+    print(f"Applied time-series sorting (Date→State→District)")
+    
     # Reorder columns (state_original at end for reference)
     cols = [c for c in df_dedup.columns if c != 'state_original'] + ['state_original']
     df_dedup = df_dedup[cols]
     
-    # Save cleaned data
-    df_dedup.to_csv(output_file, index=False)
-    print(f"\n[OK] Saved to: {output_file}")
+    # Split and save cleaned data
+    print(f"\nSaving files (Excel limit: {EXCEL_MAX_ROWS:,} rows)...")
+    files_info = split_and_save(df_dedup, output_base)
+    
+    print(f"\n[OK] Saved {len(files_info)} file(s)")
     print(f"  Final rows: {len(df_dedup):,}")
     print(f"  Unique states: {df_dedup['state'].nunique()}")
     
@@ -243,6 +314,7 @@ def clean_dataset(input_dir, output_file, dataset_name):
         'invalid_states': invalid_count,
         'final_rows': len(df_dedup),
         'unique_states': df_dedup['state'].nunique(),
+        'files_info': files_info,
     }
 
 
@@ -273,8 +345,49 @@ def generate_report(stats_list, output_file):
         f.write("5. Converted dates to YYYY-MM-DD format\n")
         f.write("6. Padded pincodes to 6 digits\n")
         f.write("7. Added 'state_original' column for reference\n")
+        f.write("8. Split large files to comply with Excel row limit\n")
     
     print(f"\n[OK] Report saved to: {output_file}")
+
+
+def generate_split_summary(stats_list, output_file):
+    """Generate a summary of split files."""
+    with open(output_file, 'w') as f:
+        f.write("="*70 + "\n")
+        f.write("CLEANED DATA - SPLIT FILES SUMMARY\n")
+        f.write("="*70 + "\n")
+        f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write("="*70 + "\n\n")
+        f.write("NOTE: Files have been split to comply with Excel's row limit\n")
+        f.write(f"      Excel maximum rows per sheet: {EXCEL_MAX_ROWS:,}\n")
+        f.write("\n" + "="*70 + "\n")
+        
+        for stats in stats_list:
+            f.write(f"\n{stats['dataset']} DATASET\n")
+            f.write("-"*70 + "\n")
+            
+            for file_info in stats['files_info']:
+                f.write(f"  {os.path.basename(file_info['file'])}\n")
+                f.write(f"    Rows: {file_info['rows']:,}\n")
+                f.write(f"    Size: {file_info['size_mb']:.2f} MB\n")
+            
+            total_rows = sum(fi['rows'] for fi in stats['files_info'])
+            f.write(f"\n  Total: {len(stats['files_info'])} file(s), {total_rows:,} rows\n")
+        
+        f.write("\n" + "="*70 + "\n")
+        f.write("USAGE INSTRUCTIONS\n")
+        f.write("="*70 + "\n")
+        f.write("1. Each part file can be opened separately in Excel\n")
+        f.write("2. For complete analysis, combine all parts using Python/pandas\n")
+        f.write("3. All files maintain the same column structure\n")
+        f.write("4. Data is split sequentially (no data loss)\n")
+        f.write("\nExample Python code to combine:\n")
+        f.write("  import pandas as pd\n")
+        f.write("  import glob\n")
+        f.write("  files = glob.glob('biometric_cleaned_part*.csv')\n")
+        f.write("  df = pd.concat([pd.read_csv(f) for f in files])\n")
+    
+    print(f"[OK] Split summary saved to: {output_file}")
 
 
 def main():
@@ -285,21 +398,21 @@ def main():
     output_dir = os.path.join(base_dir, 'cleaned_data')
     os.makedirs(output_dir, exist_ok=True)
     
-    # Define datasets
+    # Define datasets (output_base is path without extension for splitting)
     datasets = [
         {
             'input_dir': os.path.join(base_dir, 'api_data_aadhar_biometric'),
-            'output_file': os.path.join(output_dir, 'biometric_cleaned.csv'),
+            'output_base': os.path.join(output_dir, 'biometric_cleaned'),
             'name': 'BIOMETRIC'
         },
         {
             'input_dir': os.path.join(base_dir, 'api_data_aadhar_demographic'),
-            'output_file': os.path.join(output_dir, 'demographic_cleaned.csv'),
+            'output_base': os.path.join(output_dir, 'demographic_cleaned'),
             'name': 'DEMOGRAPHIC'
         },
         {
             'input_dir': os.path.join(base_dir, 'api_data_aadhar_enrolment'),
-            'output_file': os.path.join(output_dir, 'enrolment_cleaned.csv'),
+            'output_base': os.path.join(output_dir, 'enrolment_cleaned'),
             'name': 'ENROLMENT'
         },
     ]
@@ -307,12 +420,16 @@ def main():
     # Process each dataset
     all_stats = []
     for ds in datasets:
-        stats = clean_dataset(ds['input_dir'], ds['output_file'], ds['name'])
+        stats = clean_dataset(ds['input_dir'], ds['output_base'], ds['name'])
         all_stats.append(stats)
     
-    # Generate report
+    # Generate reports
     report_file = os.path.join(output_dir, 'cleaning_report.txt')
     generate_report(all_stats, report_file)
+    
+    # Generate split files summary
+    split_summary_file = os.path.join(output_dir, 'SPLIT_FILES_SUMMARY.txt')
+    generate_split_summary(all_stats, split_summary_file)
     
     print("\n" + "="*60)
     print("DATA CLEANING COMPLETE!")
